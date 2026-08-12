@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(description="SQLAlchemy MySQL/MariaDB 接続 URL")
-    gemini_api_key: SecretStr = Field(description="Gemini Developer API の API キー")
+    gemini_api_key: SecretStr | None = Field(default=None, description="Gemini併用時のDeveloper APIキー")
     gemini_model: str = "gemini-2.5-flash"
 
     # 現在時刻からこの分数前後を調べ、発走約10分前に一度だけ生成します。
@@ -32,8 +32,12 @@ class Settings(BaseSettings):
     lock_lease_seconds: int = Field(default=300, ge=60, le=1800)
     scheduler_interval_seconds: int = Field(default=60, ge=30, le=300)
 
+    # SQL蓄積型の決定論的予想に使用する設定です。
+    sql_algorithm_version: str = Field(default="sql-v2", min_length=1, max_length=64)
+    ticket_stake_yen: int = Field(default=100, ge=100, le=10000, multiple_of=100)
+
     # ``mock`` はローカル検証用です。実運用では実データ連携実装を登録してください。
-    data_provider: str = "mock"
+    data_provider: str = "sql"
     log_level: str = "INFO"
 
     @field_validator("database_url")
@@ -51,8 +55,8 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_data_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"mock", "integration"}:
-            raise ValueError("DATA_PROVIDER は mock または integration を指定してください。")
+        if normalized not in {"mock", "integration", "sql"}:
+            raise ValueError("DATA_PROVIDER は mock、integration、sql のいずれかを指定してください。")
         return normalized
 
 

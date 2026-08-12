@@ -131,6 +131,54 @@ class MockRaceDataProvider:
         )
 
 
+class SqlRaceDataProvider:
+    """SQLへ投入済みの発走前スナップショットだけを読むデータ提供元。
+
+    外部サイトへの取得や過去データの補完は行わない。投入元は許可済みの取込処理が
+    ``race_market_snapshots`` に正規化済みJSONを書き込む前提とする。
+    """
+
+    name = "sql"
+
+    def __init__(self, database_url: str) -> None:
+        from sqlalchemy import create_engine
+
+        self._engine = create_engine(database_url, pool_pre_ping=True, future=True)
+
+    def fetch_market_data(self, race: DueRace) -> RaceMarketData:
+        statement = text(
+            """
+            SELECT snapshot_json
+            FROM race_market_snapshots
+            WHERE race_id = :race_id
+              AND is_ready_for_prediction = 1
+              AND captured_at <= :scheduled_start_at
+            ORDER BY captured_at DESC
+            LIMIT 1
+            """
+        )
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                statement,
+                {
+                    "race_id": race.race_id,
+                    "scheduled_start_at": as_utc_naive(race.scheduled_start_at),
+                },
+            ).mappings().first()
+
+        if row is None:
+            raise LookupError(
+                f"race_id={race.race_id} に発走前のSQLスナップショットがありません。"
+            )
+        payload = row["snapshot_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        market_data = RaceMarketData.model_validate(payload)
+        if market_data.race_id != race.race_id:
+            raise ValueError("SQLスナップショットのrace_idが対象レースと一致しません。")
+        return market_data
+
+
 class IntegrationRaceDataProvider:
     """実データ連携の実装位置を明示するアダプタ。
 
@@ -150,6 +198,8 @@ class IntegrationRaceDataProvider:
 def create_data_provider(settings: Settings) -> RaceDataProvider:
     if settings.data_provider == "mock":
         return MockRaceDataProvider()
+    if settings.data_provider == "sql":
+        return SqlRaceDataProvider(settings.database_url)
     return IntegrationRaceDataProvider()
 
 
@@ -398,6 +448,8 @@ def process_due_races(
                 raise ValueError("データ提供元の race_id が対象レースと一致しません。")
 
             if client is None:
+                if settings.gemini_api_key is None:
+                    raise RuntimeError("Gemini予想を実行するにはGEMINI_API_KEYが必要です。SQL方式では不要です。")
                 client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
 
             prediction = generate_prediction(client, settings, market_data)

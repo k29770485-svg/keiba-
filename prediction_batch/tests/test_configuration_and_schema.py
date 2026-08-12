@@ -32,6 +32,14 @@ class ConfigurationAndSchemaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.create_settings(database_url="postgresql://localhost/keiba")
 
+    def test_sql_mode_does_not_require_gemini_key(self) -> None:
+        settings = Settings(
+            database_url="mysql+pymysql://user:password@localhost:3306/keiba?charset=utf8mb4",
+            data_provider="sql",
+        )
+        self.assertEqual(settings.data_provider, "sql")
+        self.assertIsNone(settings.gemini_api_key)
+
     def test_mock_provider_returns_market_data_for_target_race(self) -> None:
         race = DueRace(
             race_id="test-race-001",

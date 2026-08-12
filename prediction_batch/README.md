@@ -136,3 +136,64 @@ WHERE r.race_id = :race_id
 ## 参考文献
 
 [1]: https://googleapis.github.io/python-genai/ "Google Gen AI SDK documentation"
+
+
+## SQL蓄積型の将来予想運用
+
+通常の起動は、Geminiを都度呼び出す方式ではなく、`DATA_PROVIDER=sql` を使います。この方式は**過去レースを再取得・再予想しません**。許可済みの取込処理がSQLに保存した発走前スナップショットだけを読み、発走約10分前に一度だけ決定論的スコアを計算します。
+
+| テーブル | 書き込み元 | 役割 |
+| --- | --- | --- |
+| `race_market_snapshots` | 許可済みの出走表・オッズ取込 | 発走前時点の入力を監査用JSONとして保存します。`is_ready_for_prediction=1` の最新行だけを利用します。 |
+| `sql_prediction_runs` | 予想バッチ | 予想時点の入力、アルゴリズム版、総投資額を保存します。 |
+| `sql_prediction_scores` | 予想バッチ | 各馬のスコア内訳、推定勝率、相対期待値、穴馬フラグ、欠損項目を保存します。 |
+| `sql_prediction_tickets` | 予想バッチ | 実際に推奨した券を1点ごとに保存し、投資額を推測しません。 |
+| `sql_race_settlements` | 許可済みの結果・払戻取込 | 確定着順と券種別の100円あたり払戻を保存します。 |
+
+> `score_breakdown_json` の欠損項目は0点として補完せず、`missing_fields_json` に明示します。推定勝率・相対期待値・回収率は過去の結果や実際の払戻が確定した範囲だけで表示され、的中・利益を保証するものではありません。
+
+### 発走前入力のSQL形式
+
+入力JSONは `RaceMarketData` に準拠し、`race_id`、`fetched_at`、`scheduled_start_at`、競馬場・コース・馬場状態・出走馬を含めます。各出走馬は少なくとも `horse_number`、`horse_name`、可能なら `win_odds`、`popularity`、`gate_number`、`jockey_name` を持ちます。年齢・父馬・馬体重増減などが未取得ならnullのまま保存してください。
+
+```sql
+INSERT INTO race_market_snapshots (
+  race_id, captured_at, source_name, snapshot_json, is_ready_for_prediction
+) VALUES (
+  :race_id, :captured_at_utc, :source_name, :race_market_data_json, TRUE
+);
+```
+
+### 結果・払戻のSQL形式
+
+結果取込では、レースを `finished` に更新したうえで、`sql_race_settlements` に確定値をUPSERTします。`payouts_json` のキーは `trifecta`、`trio`、`wide` で、値は馬番キーと100円あたり払戻の対応表です。三連単は着順どおり、三連複とワイドは馬番昇順のキーです。
+
+```sql
+INSERT INTO sql_race_settlements (
+  race_id, actual_top3_json, payouts_json, source_name, is_confirmed, confirmed_at
+) VALUES (
+  :race_id,
+  JSON_ARRAY(1, 2, 3),
+  JSON_OBJECT(
+    'trifecta', JSON_OBJECT('1-2-3', 12540),
+    'trio', JSON_OBJECT('1-2-3', 1840),
+    'wide', JSON_OBJECT('1-2', 420)
+  ),
+  :source_name, TRUE, UTC_TIMESTAMP()
+)
+ON DUPLICATE KEY UPDATE
+  actual_top3_json = VALUES(actual_top3_json),
+  payouts_json = VALUES(payouts_json),
+  source_name = VALUES(source_name),
+  is_confirmed = TRUE,
+  confirmed_at = VALUES(confirmed_at);
+```
+
+バッチは1周期ごとに、未生成の発走前レースを予想し、確定払戻が揃った保留チケットだけを精算します。払戻が未入力の券種は保留を維持するため、推測の回収率は生成されません。券種別の回収率は `sql_prediction_performance_summary` から参照できます。
+
+```bash
+cd prediction_batch
+python -m prediction_batch.main
+```
+
+長時間の常駐実行には、サイトと同じSQLに接続できる管理されたバックグラウンド実行環境を使用してください。サービスが停止している間は予想対象の時間窓を逃すため、`SCHEDULER_INTERVAL_SECONDS=60` を維持し、プロセス監視と自動再起動を設定します。

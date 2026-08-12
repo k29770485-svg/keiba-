@@ -10,8 +10,9 @@ from datetime import timezone
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from .batch import create_engine_and_session_factory, process_due_races
+from .batch import create_data_provider, create_engine_and_session_factory
 from .config import get_settings
+from .sql_pipeline import run_sql_cycle
 
 
 def configure_logging(level: str) -> None:
@@ -28,15 +29,21 @@ def main() -> None:
 
     engine, session_factory = create_engine_and_session_factory(settings)
 
+    provider = create_data_provider(settings)
+
     def run_batch() -> None:
-        stats = process_due_races(settings, session_factory)
+        prediction_stats, settlement_stats = run_sql_cycle(settings, session_factory, provider)
         logger.info(
-            "バッチ完了 discovered=%d locked=%d generated=%d skipped=%d failed=%d",
-            stats.discovered,
-            stats.locked,
-            stats.generated,
-            stats.skipped,
-            stats.failed,
+            "SQL予想周期完了 discovered=%d locked=%d generated=%d skipped=%d failed=%d "
+            "confirmed_races=%d settled_tickets=%d pending_tickets=%d",
+            prediction_stats.discovered,
+            prediction_stats.locked,
+            prediction_stats.generated,
+            prediction_stats.skipped,
+            prediction_stats.failed,
+            settlement_stats.confirmed_races,
+            settlement_stats.settled_tickets,
+            settlement_stats.pending_tickets,
         )
 
     scheduler = BlockingScheduler(
@@ -51,7 +58,7 @@ def main() -> None:
         run_batch,
         trigger="interval",
         seconds=settings.scheduler_interval_seconds,
-        id="generate_due_race_predictions",
+        id="run_sql_prediction_and_settlement_cycle",
         replace_existing=True,
         next_run_time=None,
     )
@@ -75,10 +82,11 @@ def main() -> None:
     signal.signal(signal.SIGTERM, shutdown)
 
     logger.info(
-        "予想バッチを開始します。実行間隔=%s秒、目標発走時刻=%s分前、データ提供元=%s",
+        "SQL予想バッチを開始します。実行間隔=%s秒、目標発走時刻=%s分前、データ提供元=%s、アルゴリズム=%s",
         settings.scheduler_interval_seconds,
         settings.prediction_lead_minutes,
         settings.data_provider,
+        settings.sql_algorithm_version,
     )
     try:
         scheduler.start()

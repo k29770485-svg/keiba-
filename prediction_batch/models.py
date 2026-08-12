@@ -125,6 +125,11 @@ class RunnerMarketData(BaseModel):
     win_odds: float | None = Field(default=None, gt=0, description="単勝オッズ")
     popularity: int | None = Field(default=None, ge=1, description="単勝人気")
     carried_weight_kg: float | None = Field(default=None, gt=0, le=100, description="負担重量kg")
+    age: int | None = Field(default=None, ge=2, le=20, description="年齢。不明時はnull")
+    sire: str | None = Field(default=None, max_length=120, description="父馬。不明時はnull")
+    horse_weight_kg: float | None = Field(default=None, gt=0, le=1000, description="馬体重kg。不明時はnull")
+    horse_weight_diff_kg: float | None = Field(default=None, ge=-100, le=100, description="前走比馬体重差kg。不明時はnull")
+    last3f_seconds: float | None = Field(default=None, gt=0, le=100, description="上がり3ハロン秒。不明時はnull")
     recent_form: list[str] = Field(default_factory=list, description="直近成績の要約")
 
 
