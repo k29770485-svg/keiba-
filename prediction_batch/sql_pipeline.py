@@ -640,6 +640,29 @@ def settle_confirmed_tickets(session_factory: sessionmaker[Session]) -> Settleme
                     },
                 )
                 stats.settled_tickets += 1
+
+            remaining = session.scalar(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM sql_prediction_tickets AS spt
+                    JOIN sql_prediction_runs AS spr ON spr.prediction_id = spt.prediction_id
+                    WHERE spr.race_id = :race_id AND spt.settlement_status = 'pending'
+                    """
+                ),
+                {"race_id": row["race_id"]},
+            )
+            if remaining == 0:
+                session.execute(
+                    text(
+                        """
+                        UPDATE sql_prediction_runs
+                        SET status = 'settled', updated_at = :updated_at
+                        WHERE race_id = :race_id AND status = 'generated'
+                        """
+                    ),
+                    {"race_id": row["race_id"], "updated_at": utcnow()},
+                )
     return stats
 
 
