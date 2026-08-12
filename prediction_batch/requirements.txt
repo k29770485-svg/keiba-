@@ -1,0 +1,7 @@
+# Python 3.10+
+google-genai>=1.0.0
+SQLAlchemy>=2.0.36
+PyMySQL>=1.1.1
+APScheduler>=3.11.0,<4.0.0
+pydantic>=2.10.6
+pydantic-settings>=2.7.1

@@ -32,3 +32,11 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Python prediction batch secrets and runtime artifacts
+prediction_batch/.env
+prediction_batch/.venv/
+prediction_batch/__pycache__/
+prediction_batch/tests/__pycache__/
+*.py[cod]
+.pytest_cache/
