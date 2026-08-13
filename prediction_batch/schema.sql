@@ -205,3 +205,26 @@ CREATE TABLE IF NOT EXISTS race_market_snapshots (
         ON DELETE CASCADE ON UPDATE CASCADE,
     INDEX idx_race_market_snapshots_ready (race_id, is_ready_for_prediction, captured_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ---------------------------------------------------------------------------
+-- トップページ向け日次回収率集計
+--
+-- 外部キーを持たない派生表。精算済みチケットの値を再集計して置き換えるため、
+-- 同じ日付を何度処理しても二重加算されない。
+-- 将来パーティション化する場合にも、settled_date を主キーへ含めている。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS prediction_performance_daily (
+    settled_date DATE NOT NULL COMMENT '精算日（UTC）',
+    algorithm_version VARCHAR(64) NOT NULL,
+    ticket_type ENUM('trifecta', 'trio', 'wide') NOT NULL,
+    settled_ticket_count INT UNSIGNED NOT NULL DEFAULT 0,
+    hit_ticket_count INT UNSIGNED NOT NULL DEFAULT 0,
+    total_stake_yen BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    total_return_yen BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    total_net_yen BIGINT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (settled_date, algorithm_version, ticket_type),
+    KEY idx_ppd_algorithm_date_type (algorithm_version, settled_date, ticket_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

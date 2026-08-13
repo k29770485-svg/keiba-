@@ -209,3 +209,40 @@ python -m prediction_batch.main
 | `top_page_api.sample.ts` | 上記SQLをバインド変数で実行するExpress APIの例です。`GET /api/top-page/prediction-summary` と `GET /api/top-page/recovery-trend` を提供します。 |
 
 APIは、予測入力そのものや未確定の回収率を返しません。発走前レースについては保存済みのスコア・穴馬フラグ・買い目概要を、実績については精算済みチケットだけを返します。既存サイトのバックエンドへ組み込む際は、アプリで共有しているMySQLプールを `createTopPageApiRouter(pool)` に渡してルーターを登録してください。
+
+
+## 日次回収率集計バッチ
+
+`prediction_performance_daily` は、精算済みチケットを**精算日・アルゴリズム版・券種**ごとに集約するトップページ用の派生表です。`schema.sql` 適用後、次のコマンドで実行できます。
+
+```bash
+cd prediction_batch
+python -m prediction_batch.daily_performance_batch
+```
+
+バッチは `DAILY_PERFORMANCE_LOOKBACK_DAYS` の直近日数（既定7日）を、削除して原票から再構築します。同じ範囲を再実行しても既存値へ加算しないため、払戻の遅延確定・訂正があっても二重計上しません。日次実行には、UTC日付が切り替わった後にこのコマンドを1回起動してください。
+
+| テーブル／モジュール | 役割 |
+| --- | --- |
+| `prediction_performance_daily` | 日別・アルゴリズム別・券種別の投資額、払戻額、収支、的中券数を保存します。 |
+| `daily_performance.py` | 半開期間 `[開始日, 終了日)` を削除後に原票から再構築する冪等な集計ロジックです。 |
+| `daily_performance_batch.py` | 設定済みDBへ接続して直近期間の集計を一度実行するバッチ入口です。 |
+
+トップページは、全期間・任意期間のサマリーを次のように取得できます。
+
+```sql
+SELECT
+  algorithm_version,
+  ticket_type,
+  SUM(settled_ticket_count) AS settled_ticket_count,
+  SUM(hit_ticket_count) AS hit_ticket_count,
+  SUM(total_stake_yen) AS total_stake_yen,
+  SUM(total_return_yen) AS total_return_yen,
+  SUM(total_net_yen) AS total_net_yen,
+  ROUND(SUM(total_return_yen) / NULLIF(SUM(total_stake_yen), 0) * 100, 2) AS recovery_rate_pct
+FROM prediction_performance_daily
+WHERE algorithm_version = :algorithm_version
+  AND settled_date >= :start_date
+  AND settled_date < :end_date
+GROUP BY algorithm_version, ticket_type;
+```

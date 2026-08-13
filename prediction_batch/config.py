@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # SQL蓄積型の決定論的予想に使用する設定です。
     sql_algorithm_version: str = Field(default="sql-v2", min_length=1, max_length=64)
     ticket_stake_yen: int = Field(default=100, ge=100, le=10000, multiple_of=100)
+    daily_performance_lookback_days: int = Field(default=7, ge=1, le=366)
 
     # ``mock`` はローカル検証用です。実運用では実データ連携実装を登録してください。
     data_provider: str = "sql"
