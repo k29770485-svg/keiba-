@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type DisplayState =
   | "prediction_ready"
@@ -182,35 +182,70 @@ function HistoryTable({ items }: { items: RaceBoardItem[] }) {
 function usePredictionHistoryBoard(endpoint: string) {
   const [data, setData] = useState<PredictionHistoryBoardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const dataRef = useRef<PredictionHistoryBoardData | null>(null);
+
+  const retry = useCallback(() => {
+    setRetryNonce((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
+    let controller: AbortController | undefined;
+
+    const schedule = (delayMilliseconds: number) => {
+      if (!disposed) timer = window.setTimeout(load, delayMilliseconds);
+    };
 
     const load = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      setIsLoading(true);
+      setError(null);
+
       try {
-        const response = await fetch(endpoint, { cache: "no-store" });
-        if (!response.ok) throw new Error("履歴データを取得できませんでした。");
+        const response = await fetch(endpoint, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`履歴データを取得できませんでした（HTTP ${response.status}）。`);
+        }
         const next = (await response.json()) as PredictionHistoryBoardData;
         if (disposed) return;
+        dataRef.current = next;
         setData(next);
         setError(null);
-        timer = window.setTimeout(load, Math.max(15, next.refreshAfterSeconds) * 1000);
+        schedule(Math.max(15, next.refreshAfterSeconds) * 1000);
       } catch (loadError) {
-        if (disposed) return;
-        setError(loadError instanceof Error ? loadError.message : "履歴データを取得できませんでした。");
-        timer = window.setTimeout(load, 60_000);
+        if (disposed || (loadError instanceof DOMException && loadError.name === "AbortError")) return;
+        const message = loadError instanceof Error ? loadError.message : "履歴データを取得できませんでした。";
+        setError(message);
+        // 成功済みの表示は消さず、エラー状態と次回自動再試行だけを重ねる。
+        setData(dataRef.current);
+        schedule(60_000);
+      } finally {
+        if (!disposed) setIsLoading(false);
       }
     };
 
     void load();
     return () => {
       disposed = true;
+      controller?.abort();
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [endpoint]);
+  }, [endpoint, retryNonce]);
 
-  return { data, error };
+  return {
+    data,
+    error,
+    isInitialLoading: isLoading && data === null,
+    isRefreshing: isLoading && data !== null,
+    retry,
+  };
 }
 
 /**
@@ -218,25 +253,72 @@ function usePredictionHistoryBoard(endpoint: string) {
  * `endpoint` は `/api/top-page/prediction-history-board?algorithmVersion=sql-v2` を指定する。
  */
 export function PredictionHistoryBoard({ endpoint }: { endpoint: string }) {
-  const { data, error } = usePredictionHistoryBoard(endpoint);
+  const { data, error, isInitialLoading, isRefreshing, retry } = usePredictionHistoryBoard(endpoint);
+
+  if (isInitialLoading) {
+    return (
+      <section className="rounded-xl border border-slate-200 bg-white p-6" aria-busy="true" aria-live="polite">
+        <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" aria-hidden="true" />
+          予想・結果・履歴を読み込んでいます。
+        </div>
+        <div className="mt-5 space-y-3" aria-hidden="true">
+          <div className="h-5 w-1/3 animate-pulse rounded bg-slate-100" />
+          <div className="h-16 animate-pulse rounded bg-slate-100" />
+          <div className="h-16 animate-pulse rounded bg-slate-100" />
+        </div>
+      </section>
+    );
+  }
 
   if (!data) {
-    return <section className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">予想履歴を読み込んでいます。</section>;
+    return (
+      <section className="rounded-xl border border-rose-200 bg-rose-50 p-6" role="alert" aria-live="assertive">
+        <h2 className="text-lg font-bold text-rose-950">予想履歴を表示できません</h2>
+        <p className="mt-2 text-sm text-rose-800">{error ?? "データを取得できませんでした。ネットワーク接続とAPIの状態を確認してください。"}</p>
+        <button
+          type="button"
+          onClick={retry}
+          className="mt-4 rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 focus:outline-none focus:ring-2 focus:ring-rose-700 focus:ring-offset-2"
+        >
+          再試行
+        </button>
+      </section>
+    );
   }
 
   return (
     <section className="space-y-6" aria-live="polite">
       <header className="rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="text-lg font-bold text-slate-900">予想・結果・履歴</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          予測、結果待ち、確定結果を分離して表示しています。自動更新は{data.refreshAfterSeconds}秒ごとです。
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">予想・結果・履歴</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              予測、結果待ち、確定結果を分離して表示しています。自動更新は{data.refreshAfterSeconds}秒ごとです。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={retry}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isRefreshing ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" aria-hidden="true" /> : null}
+            {isRefreshing ? "更新中" : "今すぐ更新"}
+          </button>
+        </div>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
           <div><dt className="text-slate-500">予想データ最終更新</dt><dd className="font-medium">{formatDateTime(data.freshness.latestPredictionGeneratedAt)}</dd></div>
           <div><dt className="text-slate-500">精算データ最終更新</dt><dd className="font-medium">{formatDateTime(data.freshness.latestTicketSettledAt)}</dd></div>
           <div><dt className="text-slate-500">日次集計最終更新</dt><dd className="font-medium">{formatDateTime(data.freshness.latestDailyAggregatedAt)}</dd></div>
         </dl>
-        {error ? <p className="mt-3 text-sm text-rose-700">{error} 前回取得分を表示しています。</p> : null}
+        {isRefreshing ? <p className="mt-3 text-sm text-blue-700" role="status">最新データを取得しています。表示中の履歴は前回取得分です。</p> : null}
+        {error ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="alert">
+            <span>{error} 前回取得分を表示しています。60秒後に自動再試行します。</span>
+            <button type="button" onClick={retry} className="font-semibold underline underline-offset-2 hover:text-amber-950">今すぐ再試行</button>
+          </div>
+        ) : null}
       </header>
 
       <section className="overflow-hidden rounded-xl border border-blue-200 bg-white">
