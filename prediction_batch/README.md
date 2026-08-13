@@ -246,3 +246,22 @@ WHERE algorithm_version = :algorithm_version
   AND settled_date < :end_date
 GROUP BY algorithm_version, ticket_type;
 ```
+
+
+## 過去予想履歴・確定結果・リアルタイム表示
+
+トップページでは、予想の状態を画面側で推測せず、`sql_prediction_runs`、`sql_prediction_tickets`、`prediction_performance_daily` から返す**表示状態**を使ってください。
+
+| 表示区分 | `display_state` | 表示ラベル | 表示する値 |
+| --- | --- | --- | --- |
+| これからの予想 | `prediction_ready` | 発走前・予想確定 | 予想生成時刻、発走予定、推奨点数。結果・回収率は表示しません。 |
+| 結果待ち | `result_pending` | 結果待ち・払戻未確定 | 払戻確定待ちであることだけを明示し、不的中とは表示しません。 |
+| 過去予想履歴 | `hit_settled` / `miss_settled` / `no_bet_settled` | 的中・結果確定／不的中・結果確定／見送り・結果確定 | 精算済みの投資額、払戻額、収支、回収率、精算完了時刻。 |
+
+| ファイル | 内容 |
+| --- | --- |
+| `top_page_history_status_queries.sql` | 上記3区分、更新時刻、予測順位・買い目明細を新テーブルから取得するSQLです。 |
+| `top_page_history_api.sample.ts` | `GET /api/top-page/prediction-history-board` を提供し、表示状態・案内文・60秒更新間隔を返すAPIサンプルです。 |
+| `PredictionHistoryBoard.sample.tsx` | 3区分を別テーブルとして描画し、データの最終更新時刻を明示するReactコンポーネントです。 |
+
+React側は `refreshAfterSeconds` に従って再取得します。予測・精算・日次集計の最終更新時刻を常に表示するため、ユーザーは情報の新しさと「結果待ち」の状態を確認できます。
