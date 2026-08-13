@@ -197,3 +197,15 @@ python -m prediction_batch.main
 ```
 
 長時間の常駐実行には、サイトと同じSQLに接続できる管理されたバックグラウンド実行環境を使用してください。サービスが停止している間は予想対象の時間窓を逃すため、`SCHEDULER_INTERVAL_SECONDS=60` を維持し、プロセス監視と自動再起動を設定します。
+
+
+## トップページ連携サンプル
+
+トップページに今回の予測結果と回収率を表示するためのサンプルは、次のファイルにあります。
+
+| ファイル | 内容 |
+| --- | --- |
+| `top_page_dashboard_queries.sql` | 全体・券種別の回収率、直近予測、穴馬候補、日別回収率推移、レース詳細を取得するSQLです。 |
+| `top_page_api.sample.ts` | 上記SQLをバインド変数で実行するExpress APIの例です。`GET /api/top-page/prediction-summary` と `GET /api/top-page/recovery-trend` を提供します。 |
+
+APIは、予測入力そのものや未確定の回収率を返しません。発走前レースについては保存済みのスコア・穴馬フラグ・買い目概要を、実績については精算済みチケットだけを返します。既存サイトのバックエンドへ組み込む際は、アプリで共有しているMySQLプールを `createTopPageApiRouter(pool)` に渡してルーターを登録してください。
