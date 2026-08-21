@@ -1,0 +1,24 @@
+{
+  "_comment": "plot_demo_metrics.py に渡す実測値。values と cost はすべて実際に計測した値のみを入れる。推定値を混ぜると図が根拠を失う。参考として示す非推奨手法には discouraged: true を付ける（赤で描画される）。",
+  "title": "段階的補完による項目別充填率の推移（全46件）",
+  "total": 46,
+  "ylabel": "充填率 (%)",
+  "stages": ["段階0\n初期状態", "段階1\nSQL一括補完", "段階2\nID逆引き", "段階3\nバッチ取得"],
+  "series": [
+    { "label": "識別子", "values": [0, 0, 46, 46] },
+    { "label": "SQLで導出できる項目", "values": [0, 46, 46, 46] },
+    { "label": "詳細項目", "values": [0, 0, 0, 12] }
+  ],
+  "cumulative_cost": [3, 3, 9, 45],
+  "cost_label": "累計外部リクエスト数（棒）",
+  "legend_loc": "center left",
+  "methods": [
+    { "label": "段階1 SQL一括補完\n(46件)", "cost": 0 },
+    { "label": "段階2 ID逆引き\n(46件)", "cost": 6 },
+    { "label": "段階3 バッチ取得\n(12件)", "cost": 36 },
+    { "label": "全件取得\n(46件・非推奨)", "cost": 138, "discouraged": true }
+  ],
+  "methods_title": "手法別の外部リクエスト消費量（実測）",
+  "methods_xlabel": "消費した外部リクエスト数",
+  "cost_suffix": " リクエスト"
+}

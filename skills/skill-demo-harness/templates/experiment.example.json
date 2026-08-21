@@ -1,0 +1,14 @@
+{
+  "_comment": "ab_guard_probe.py に渡す対照実験の定義。破壊条件を setup で仕込み、guarded と unguarded を同一条件で走らせて observe の差を見る。teardown は必ず実行される。",
+  "name": "名前照合ガード",
+  "cwd": "/home/ubuntu/demo-project",
+  "env": {
+    "DATABASE_URL": "mysql://demo:demopass@127.0.0.1:3306/demo_db"
+  },
+  "setup": "node corrupt_ids.mjs --count 3",
+  "guarded": "node batch_fetch.mjs --limit 3",
+  "unguarded": "node batch_fetch_noguard.mjs --limit 3",
+  "observe": "mysql -h 127.0.0.1 -u demo -pdemopass demo_db -N -e \"SELECT name, IFNULL(trainer,'NULL'), IFNULL(sire,'NULL') FROM horses WHERE id IN (1,2,3) ORDER BY id\" 2>/dev/null",
+  "teardown": "node restore_ids.mjs",
+  "expect_guarded_unchanged": true
+}

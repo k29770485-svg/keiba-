@@ -1,0 +1,61 @@
+{
+  "_comment": "verify_fixture.py に渡す期待値宣言の実例。keiba-prediction-analysis を対象にした場合。対象スキルに合わせて table 名・カラム名・SQLを差し替える。",
+  "connection": {
+    "table_result": "race_results",
+    "table_analysis": "race_analysis_results",
+    "join_key": "analysisId",
+    "date_col": "raceDate",
+    "hit_col": "isHit"
+  },
+  "assertions": [
+    {
+      "name": "Case A: 直近週の的中率が10%未満まで急落",
+      "sql": "SELECT SUM(isHit)/COUNT(*)*100 FROM race_results WHERE raceDate >= '2026-08-01'",
+      "expect": "lt",
+      "value": 10,
+      "hint": "PROFILE の collapse/chaos の hit_rate を下げる"
+    },
+    {
+      "name": "Case A: 健全期間の的中率が20%以上",
+      "sql": "SELECT SUM(isHit)/COUNT(*)*100 FROM race_results WHERE raceDate <= '2026-07-13'",
+      "expect": "gte",
+      "value": 20,
+      "hint": "healthy プロファイルの hit_rate を上げる"
+    },
+    {
+      "name": "Case B: baseScore構成比が80%超（オッズ依存）",
+      "sql": "SELECT SUM(JSON_EXTRACT(analysisJson,'$[0].baseScore')) / (SUM(JSON_EXTRACT(analysisJson,'$[0].baseScore')) + SUM(JSON_EXTRACT(analysisJson,'$[0].courseBonus')) + SUM(JSON_EXTRACT(analysisJson,'$[0].historyBonus')) + SUM(JSON_EXTRACT(analysisJson,'$[0].aptitudeBonus'))) * 100 FROM race_analysis_results",
+      "expect": "gt",
+      "value": 80,
+      "hint": "algo_mode を odds_only 中心にする"
+    },
+    {
+      "name": "Case C: 万馬券率50%超の開催日が1日以上存在",
+      "sql": "SELECT COUNT(*) FROM (SELECT raceDate FROM race_results GROUP BY raceDate HAVING SUM(trifectaPayout>=10000)/COUNT(*) > 0.5) t",
+      "expect": "gte",
+      "value": 1,
+      "hint": "chaos プロファイルの manba を上げる"
+    },
+    {
+      "name": "Case D: 道悪の的中率が良馬場より低い（差の絶対値5pt以上）",
+      "sql": "SELECT (SELECT SUM(rr.isHit)/COUNT(*)*100 FROM race_results rr JOIN race_analysis_results a ON rr.analysisId=a.id WHERE a.trackCondition='良') - (SELECT SUM(rr.isHit)/COUNT(*)*100 FROM race_results rr JOIN race_analysis_results a ON rr.analysisId=a.id WHERE a.trackCondition<>'良')",
+      "expect": "gte",
+      "value": 5,
+      "hint": "muddy プロファイルの hit_rate を下げる"
+    },
+    {
+      "name": "母数: 十分なレース数が投入されている",
+      "sql": "SELECT COUNT(*) FROM race_results",
+      "expect": "gte",
+      "value": 200,
+      "hint": "SCHEDULE に開催日を追加する"
+    },
+    {
+      "name": "母数差: 平日開催と週末開催が混在している",
+      "sql": "SELECT COUNT(DISTINCT cnt) FROM (SELECT raceDate, COUNT(*) cnt FROM race_results GROUP BY raceDate) t",
+      "expect": "gte",
+      "value": 2,
+      "hint": "12R開催と36R開催の両方をSCHEDULEに含める"
+    }
+  ]
+}

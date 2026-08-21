@@ -1,0 +1,30 @@
+{
+  "algorithmVersion": "sql-v2",
+  "refreshAfterSeconds": 60,
+  "freshness": {
+    "serverTimeUtc": "2026-08-14T03:00:00Z",
+    "latestPredictionGeneratedAt": "2026-08-14T02:50:00Z",
+    "latestTicketSettledAt": "2026-08-14T01:10:00Z",
+    "latestDailyAggregatedAt": "2026-08-14T01:20:00Z"
+  },
+  "sections": {
+    "upcoming": {
+      "title": "これからの予想",
+      "state": "prediction_ready",
+      "description": "発走前に保存された予想です。結果・回収率は含みません。",
+      "items": []
+    },
+    "resultPending": {
+      "title": "結果待ち",
+      "state": "result_pending",
+      "description": "レース終了後、払戻または精算が未確定の予想です。不的中ではありません。",
+      "items": []
+    },
+    "settledHistory": {
+      "title": "過去予想履歴・確定結果",
+      "state": "settled_history",
+      "description": "確定払戻に基づく投資額・払戻額・収支・回収率です。",
+      "items": []
+    }
+  }
+}
