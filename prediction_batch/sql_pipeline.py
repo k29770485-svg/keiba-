@@ -589,9 +589,8 @@ def settle_confirmed_tickets(session_factory: sessionmaker[Session]) -> Settleme
                 FROM races AS r
                 JOIN sql_race_settlements AS rs
                   ON rs.race_id = r.race_id AND rs.is_confirmed = 1
-                JOIN sql_prediction_runs AS spr ON spr.race_id = r.race_id
-                JOIN sql_prediction_tickets AS spt
-                  ON spt.prediction_id = spr.prediction_id AND spt.settlement_status = 'pending'
+                JOIN sql_prediction_runs AS spr
+                  ON spr.race_id = r.race_id AND spr.status = 'generated'
                 WHERE r.race_status = 'finished'
                 """
             )
