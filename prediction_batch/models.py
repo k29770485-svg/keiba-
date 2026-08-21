@@ -133,6 +133,24 @@ class RunnerMarketData(BaseModel):
     recent_form: list[str] = Field(default_factory=list, description="直近成績の要約")
 
 
+class TicketMarketQuote(BaseModel):
+    """券種・組合せごとの市場払戻見込みと、事前校正済みの的中確率。
+
+    ``calibration_sample_size`` は同一券種・同一モデル版で、発走時点までに
+    完全に精算されたウォークフォワード検証件数だけを指定する。未校正または
+    小標本の値は買い目生成に使用しない。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticket_type: Literal["trifecta", "trio", "wide"]
+    selection: list[int] = Field(min_length=2, max_length=3)
+    payout_per_100_yen: float = Field(gt=0, description="100円あたりの発走前払戻見込み")
+    calibrated_probability_pct: float = Field(gt=0, le=100, description="校正済みの組合せ的中確率")
+    calibration_sample_size: int = Field(ge=0, description="事前ウォークフォワード検証の精算済み件数")
+    model_version: str = Field(min_length=1, max_length=64)
+
+
 class RaceMarketData(BaseModel):
     """取得アダプタが返すデータ契約。
 
@@ -153,6 +171,10 @@ class RaceMarketData(BaseModel):
     track_condition: str | None = Field(default=None, max_length=40)
     weather: str | None = Field(default=None, max_length=40)
     runners: list[RunnerMarketData] = Field(min_length=2, max_length=40)
+    ticket_market_quotes: list[TicketMarketQuote] = Field(
+        default_factory=list,
+        description="券種別の市場払戻見込みと校正済み確率。未提供なら買い目は見送る。",
+    )
     source_url: str | None = Field(default=None, max_length=2048)
 
 

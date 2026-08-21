@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from prediction_batch.batch import SqlRaceDataProvider, utcnow
 from prediction_batch.config import Settings
 from prediction_batch.daily_performance import refresh_daily_performance
-from prediction_batch.models import RaceMarketData, RunnerMarketData
+from prediction_batch.models import RaceMarketData, RunnerMarketData, TicketMarketQuote
 from prediction_batch.sql_pipeline import (
     generate_value_tickets,
     process_sql_predictions,
@@ -26,7 +26,7 @@ from prediction_batch.sql_pipeline import (
     settle_confirmed_tickets,
 )
 
-ALGORITHM_VERSION = "fixture-sql-v2"
+ALGORITHM_VERSION = "fixture-sql-v3-ev-strict"
 FIXTURE_SOURCE = "isolated-fixture"
 
 
@@ -63,6 +63,32 @@ def build_runners(prefix: str, count: int, odds_profile: str) -> list[RunnerMark
     return runners
 
 
+def build_ticket_quotes(quote_profile: str) -> list[TicketMarketQuote]:
+    if quote_profile == "strong":
+        return [
+            TicketMarketQuote(
+                ticket_type="wide",
+                selection=[3, 4],
+                payout_per_100_yen=2000,
+                calibrated_probability_pct=10.0,
+                calibration_sample_size=500,
+                model_version=ALGORITHM_VERSION,
+            )
+        ]
+    if quote_profile == "small_sample":
+        return [
+            TicketMarketQuote(
+                ticket_type="wide",
+                selection=[3, 4],
+                payout_per_100_yen=3000,
+                calibrated_probability_pct=15.0,
+                calibration_sample_size=14,
+                model_version=ALGORITHM_VERSION,
+            )
+        ]
+    return []
+
+
 def build_case(
     race_id: str,
     venue_name: str,
@@ -72,6 +98,7 @@ def build_case(
     track_condition: str,
     field_size: int,
     odds_profile: str,
+    quote_profile: str,
     scheduled_start_at: Any,
 ) -> RaceMarketData:
     return RaceMarketData(
@@ -87,6 +114,7 @@ def build_case(
         track_condition=track_condition,
         weather="fixture",
         runners=build_runners(race_id, field_size, odds_profile),
+        ticket_market_quotes=build_ticket_quotes(quote_profile),
         source_url=f"https://fixture.invalid/{race_id}",
     )
 
@@ -154,16 +182,16 @@ def main() -> None:
 
     cases = [
         build_case(
-            "FX_SAPPORO_T1200", "札幌", "札幌 芝1200", "芝", 1200, "良", 12, "value", scheduled
+            "FX_SAPPORO_T1200", "札幌", "札幌 芝1200", "芝", 1200, "良", 12, "value", "strong", scheduled
         ),
         build_case(
-            "FX_TOKYO_D1600", "東京", "東京 ダ1600", "ダート", 1600, "重", 14, "value", scheduled
+            "FX_TOKYO_D1600", "東京", "東京 ダ1600", "ダート", 1600, "重", 14, "value", "strong", scheduled
         ),
         build_case(
-            "FX_CHUKYO_T2200", "中京", "中京 芝2200", "芝", 2200, "不良", 10, "no_bet", scheduled
+            "FX_CHUKYO_T2200", "中京", "中京 芝2200", "芝", 2200, "不良", 10, "no_bet", "none", scheduled
         ),
         build_case(
-            "FX_KYOTO_D1800", "京都", "京都 ダ1800", "ダート", 1800, "稍重", 16, "value", scheduled
+            "FX_KYOTO_D1800", "京都", "京都 ダ1800", "ダート", 1800, "稍重", 16, "value", "small_sample", scheduled
         ),
     ]
 
@@ -239,8 +267,10 @@ def main() -> None:
         raise AssertionError(f"予想保存件数が不正です: {asdict(prediction_stats)}")
     if ticket_counts["FX_CHUKYO_T2200"] != 0:
         raise AssertionError("低オッズのみの見送りケースで買い目が生成されました。")
-    if ticket_counts["FX_TOKYO_D1600"] == 0:
-        raise AssertionError("東京ダート重馬場ケースで買い目が生成されませんでした。")
+    if ticket_counts["FX_KYOTO_D1800"] != 0:
+        raise AssertionError("小標本の高期待値ケースで買い目が生成されました。")
+    if ticket_counts["FX_SAPPORO_T1200"] != 1 or ticket_counts["FX_TOKYO_D1600"] != 1:
+        raise AssertionError("校正済みで控除率後にも十分な歪みを持つケースが最大1点に絞られませんでした。")
 
     # 東京は払戻を投入して精算、京都は結果待ち、中京は見送りでも結果確定へ遷移できるか検証する。
     with engine.begin() as connection:

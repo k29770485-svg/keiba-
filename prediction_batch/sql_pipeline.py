@@ -29,7 +29,7 @@ from .batch import (
     utcnow,
 )
 from .config import Settings
-from .models import RaceMarketData, RunnerMarketData
+from .models import RaceMarketData, RunnerMarketData, TicketMarketQuote
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,13 @@ SIRE_LINE_AFFINITY: dict[str, dict[str, float]] = {
 }
 
 RATING_BY_RANK = ("◎", "○", "▲", "△", "△")
+
+# JRA公式の設定払戻率。市場の総オッズ倍率へ掛け、控除率後の保守的期待値を計算する。
+JRA_PAYOUT_RATE_BY_TICKET_TYPE: dict[str, float] = {
+    "wide": 0.775,
+    "trio": 0.750,
+    "trifecta": 0.725,
+}
 
 
 @dataclass(frozen=True)
@@ -322,7 +329,11 @@ def calculate_score(runner: RunnerMarketData, market_data: RaceMarketData) -> Sc
 
 
 def score_market_data(market_data: RaceMarketData) -> list[ScoredRunner]:
-    """レース内正規化の推定勝率・相対期待値を付与し、穴馬候補を識別する。"""
+    """順位用スコアと参考値としての相対期待値を付与する。
+
+    この関数の ``expected_value`` は単勝オッズからの順位参考値であり、買い目判定には使わない。
+    買い目は ``generate_value_tickets`` が券種別の校正済み確率と控除率後期待値で別途判断する。
+    """
     breakdowns = [(runner, calculate_score(runner, market_data)) for runner in market_data.runners]
     if not breakdowns:
         return []
@@ -343,7 +354,8 @@ def score_market_data(market_data: RaceMarketData) -> list[ScoredRunner]:
             and runner.win_odds is not None
             and runner.win_odds >= 5.0
             and expected_value is not None
-            and expected_value >= 0
+            and expected_value >= 75.0
+            and not breakdown.missing_fields
         )
         unsorted.append(
             ScoredRunner(
@@ -368,43 +380,83 @@ def score_market_data(market_data: RaceMarketData) -> list[ScoredRunner]:
     ]
 
 
-def generate_value_tickets(scored: list[ScoredRunner], stake_yen: int) -> list[GeneratedTicket]:
-    """相対期待値0%以上の候補が3頭以上ある場合だけ、重複のない券を作る。"""
-    eligible = [
-        item
-        for item in scored
-        if item.odds is not None and item.odds > 0 and item.expected_value is not None and item.expected_value >= 0
-    ]
-    eligible.sort(key=lambda item: (-(item.expected_value or 0.0), -item.score, item.horse_number))
-    eligible = eligible[:4]
-    if len(eligible) < 3:
+def probability_lower_confidence_bound(
+    probability_pct: float,
+    calibration_sample_size: int,
+    confidence_z: float,
+) -> float:
+    """校正済み確率の正規近似下限を百分率で返す。
+
+    標本数が小さいほど下限を強く引き下げ、偶然の的中による偽の期待値を買い目から除外する。
+    """
+    probability = max(0.0, min(1.0, probability_pct / 100.0))
+    if calibration_sample_size <= 0:
+        return 0.0
+    standard_error = math.sqrt(probability * (1.0 - probability) / calibration_sample_size)
+    return max(0.0, probability - confidence_z * standard_error) * 100.0
+
+
+def generate_value_tickets(
+    scored: list[ScoredRunner],
+    stake_yen: int,
+    ticket_quotes: list[TicketMarketQuote] | None = None,
+    *,
+    algorithm_version: str = "sql-v3-ev-strict",
+    min_calibration_sample_size: int = 250,
+    probability_confidence_z: float = 1.96,
+    min_conservative_ev_pct: float = 35.0,
+    min_market_edge_pct: float = 50.0,
+    max_tickets_per_race: int = 1,
+) -> list[GeneratedTicket]:
+    """控除率後の保守的期待値が十分に高い券だけを最大1点生成する。
+
+    単勝オッズから作った馬単位の相対期待値、未校正確率、標本不足、特徴量欠損、
+    券種別の市場払戻見込み不在はいずれも買い目ではなく見送りとなる。
+    """
+    if stake_yen <= 0 or not ticket_quotes:
         return []
 
-    axis = eligible[0]
-    partners = eligible[1:4]
-    tickets: list[GeneratedTicket] = []
-    ticket_keys: set[tuple[str, str]] = set()
+    scored_by_number = {item.horse_number: item for item in scored}
+    candidates: list[tuple[float, float, GeneratedTicket]] = []
+    selection_sizes = {"wide": 2, "trio": 3, "trifecta": 3}
 
-    def add(ticket_type: str, selection: tuple[int, ...]) -> None:
-        key = canonical_selection_key(ticket_type, selection)
-        identifier = (ticket_type, key)
-        if identifier not in ticket_keys:
-            ticket_keys.add(identifier)
-            tickets.append(GeneratedTicket(ticket_type=ticket_type, selection=selection, stake_yen=stake_yen))
+    for quote in ticket_quotes:
+        selection = tuple(int(value) for value in quote.selection)
+        if quote.ticket_type not in selection_sizes or len(selection) != selection_sizes[quote.ticket_type]:
+            continue
+        if len(set(selection)) != len(selection) or any(number not in scored_by_number for number in selection):
+            continue
+        if quote.model_version != algorithm_version or quote.calibration_sample_size < min_calibration_sample_size:
+            continue
+        if any(scored_by_number[number].breakdown.missing_fields for number in selection):
+            continue
 
-    for second in partners[:2]:
-        for third in [axis, *partners]:
-            selection = (axis.horse_number, second.horse_number, third.horse_number)
-            if len(set(selection)) == 3:
-                add("trifecta", selection)
+        probability_lcb_pct = probability_lower_confidence_bound(
+            quote.calibrated_probability_pct,
+            quote.calibration_sample_size,
+            probability_confidence_z,
+        )
+        probability_lcb = probability_lcb_pct / 100.0
+        payout_rate = JRA_PAYOUT_RATE_BY_TICKET_TYPE[quote.ticket_type]
+        # ``payout_per_100_yen`` は控除後の発走前払戻見込み。控除前倍率を復元して
+        # 市場の歪みを確認し、その後に控除率を再適用して実際の保守的期待値を求める。
+        net_market_multiple = quote.payout_per_100_yen / 100.0
+        gross_market_multiple = net_market_multiple / payout_rate
+        gross_edge_pct = (probability_lcb * gross_market_multiple - 1.0) * 100.0
+        conservative_ev_pct = (probability_lcb * gross_market_multiple * payout_rate - 1.0) * 100.0
+        if gross_edge_pct < min_market_edge_pct or conservative_ev_pct < min_conservative_ev_pct:
+            continue
 
-    for pair in combinations(partners, 2):
-        add("trio", (axis.horse_number, pair[0].horse_number, pair[1].horse_number))
+        candidates.append(
+            (
+                conservative_ev_pct,
+                probability_lcb_pct,
+                GeneratedTicket(ticket_type=quote.ticket_type, selection=selection, stake_yen=stake_yen),
+            )
+        )
 
-    if axis.odds is not None and axis.odds >= 4.0 and partners:
-        add("wide", (axis.horse_number, partners[0].horse_number))
-
-    return tickets
+    candidates.sort(key=lambda item: (-item[0], -item[1], item[2].ticket_type, item[2].selection))
+    return [item[2] for item in candidates[:max_tickets_per_race]]
 
 
 def get_sql_due_races(session: Session, settings: Settings, now: datetime) -> list[DueRace]:
@@ -566,7 +618,17 @@ def process_sql_predictions(
             if market_data.race_id != race.race_id:
                 raise ValueError("入力データのrace_idが対象レースと一致しません。")
             scored = score_market_data(market_data)
-            tickets = generate_value_tickets(scored, settings.ticket_stake_yen)
+            tickets = generate_value_tickets(
+                scored,
+                settings.ticket_stake_yen,
+                market_data.ticket_market_quotes,
+                algorithm_version=settings.sql_algorithm_version,
+                min_calibration_sample_size=settings.value_min_calibration_sample_size,
+                probability_confidence_z=settings.value_probability_confidence_z,
+                min_conservative_ev_pct=settings.value_min_conservative_ev_pct,
+                min_market_edge_pct=settings.value_min_market_edge_pct,
+                max_tickets_per_race=settings.value_max_tickets_per_race,
+            )
             with session_factory.begin() as session:
                 save_sql_prediction(session, market_data, scored, tickets, settings, utcnow())
                 release_race_lock(session, race.race_id, worker_id)

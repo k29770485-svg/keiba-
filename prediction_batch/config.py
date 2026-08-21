@@ -33,9 +33,17 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: int = Field(default=60, ge=30, le=300)
 
     # SQL蓄積型の決定論的予想に使用する設定です。
-    sql_algorithm_version: str = Field(default="sql-v2", min_length=1, max_length=64)
+    sql_algorithm_version: str = Field(default="sql-v3-ev-strict", min_length=1, max_length=64)
     ticket_stake_yen: int = Field(default=100, ge=100, le=10000, multiple_of=100)
     daily_performance_lookback_days: int = Field(default=7, ge=1, le=366)
+
+    # 買い目は、券種別に事前校正された組合せ確率と発走前払戻見込みがそろう場合だけ生成する。
+    # 直近2週間程度の小標本だけでは0件のままとし、ノイズによる穴馬の過剰評価を防ぐ。
+    value_min_calibration_sample_size: int = Field(default=250, ge=30, le=100000)
+    value_probability_confidence_z: float = Field(default=1.96, ge=0.0, le=4.0)
+    value_min_conservative_ev_pct: float = Field(default=35.0, ge=0.0, le=1000.0)
+    value_min_market_edge_pct: float = Field(default=50.0, ge=0.0, le=1000.0)
+    value_max_tickets_per_race: int = Field(default=1, ge=1, le=10)
 
     # ``mock`` はローカル検証用です。実運用では実データ連携実装を登録してください。
     data_provider: str = "sql"
