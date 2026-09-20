@@ -306,3 +306,24 @@ export function ScoreStoryBoard({ endpoint }: { endpoint: string }) {
     </section>
   );
 }
+trait KillerFeatures extends RESTMethods {
+
+  def feature1():Either[String, String] = {
+    // foo
+  }
+
+  def feature2():Either[String, String] = {
+    // foo
+  }
+}trait KillerFeatures extends RESTMethods {
+
+  def feature1():Either[String, String] = {
+    // foocurl --include --request GET \
+--url "https://api.github.com/repos/octocat/Spoon-Knife/issues" \
+--header "Accept: application/vnd.github+json"
+  }
+
+  def feature2():Either[String, String] = {
+    // foo
+  }
+}
